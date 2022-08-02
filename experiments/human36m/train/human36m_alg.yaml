@@ -1,6 +1,6 @@
 title: "human36m_alg"
 kind: "human36m"
-vis_freq: 1000
+vis_freq: 100
 vis_n_elements: 10
 
 image_shape: [384, 384]
@@ -12,8 +12,8 @@ opt:
   n_objects_per_epoch: 15000
   n_epochs: 9999
 
-  batch_size: 8
-  val_batch_size: 16
+  batch_size: 2
+  val_batch_size: 4
 
   lr: 0.00001
 
@@ -34,7 +34,7 @@ model:
     style: "simple"
 
     init_weights: true
-    checkpoint: "./data/pretrained/human36m/pose_resnet_4.5_pixels_human36m.pth"
+    checkpoint: "./models/pose_resnet_4.5_pixels_human36m.pth"
 
     num_joints: 17
     num_layers: 152
@@ -43,10 +43,10 @@ dataset:
   kind: "human36m"
 
   train:
-    h36m_root: "./data/human36m/processed/"
-    labels_path: "./data/human36m/extra/human36m-multiview-labels-GTbboxes.npy"
+    h36m_root: "/2t/data/datasets/h36m/processed"
+    labels_path: "/2t/data/datasets/h36m/extra/human36m-multiview-labels-GTbboxes.npy"
     with_damaged_actions: true
-    undistort_images: true
+    undistort_images: false
 
     scale_bbox: 1.0
 
@@ -54,13 +54,13 @@ dataset:
     randomize_n_views: false
     min_n_views: null
     max_n_views: null
-    num_workers: 8
+    num_workers: 2
 
   val:
-    h36m_root: "./data/human36m/processed/"
-    labels_path: "./data/human36m/extra/human36m-multiview-labels-GTbboxes.npy"
+    h36m_root: "/2t/data/datasets/h36m/processed"
+    labels_path: "/2t/data/datasets/h36m/extra/human36m-multiview-labels-GTbboxes.npy"
     with_damaged_actions: true
-    undistort_images: true
+    undistort_images: false
 
     scale_bbox: 1.0
 
@@ -68,6 +68,6 @@ dataset:
     randomize_n_views: false
     min_n_views: null
     max_n_views: null
-    num_workers: 8
+    num_workers: 2
 
     retain_every_n_frames_in_test: 1

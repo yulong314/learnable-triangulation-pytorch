@@ -2,7 +2,7 @@ from copy import deepcopy
 import numpy as np
 import pickle
 import random
-
+import time
 from scipy.optimize import least_squares
 
 import torch
@@ -349,7 +349,9 @@ class VolumetricTriangulationNet(nn.Module):
         volumes = op.unproject_heatmaps(features, proj_matricies, coord_volumes, volume_aggregation_method=self.volume_aggregation_method, vol_confidences=vol_confidences)
 
         # integral 3d
+        time0 = time.time()
         volumes = self.volume_net(volumes)
+        # print(time.time() - time0)
         vol_keypoints_3d, volumes = op.integrate_tensor_3d_with_coordinates(volumes * self.volume_multiplier, coord_volumes, softmax=self.volume_softmax)
 
         return vol_keypoints_3d, features, volumes, vol_confidences, cuboids, coord_volumes, base_points

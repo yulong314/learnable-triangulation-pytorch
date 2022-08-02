@@ -19,7 +19,7 @@
 
         },
         {
-            "name": "train",
+            "name": "eval",
             "type": "python",
             "request": "launch",
             "program": "train.py",
@@ -32,6 +32,18 @@
                 "--config",
                 "experiments/human36m/eval/human36m_alg.yaml"
             ]
-        }
+        },
+        {
+            "name": "train",
+            "type": "python",
+            "request": "launch",
+            "program": "train.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--config",
+                "experiments/human36m/train/human36m_vol_softmax.yaml"
+            ]
+        }        
     ]
 }
