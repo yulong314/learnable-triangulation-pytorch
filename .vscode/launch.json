@@ -54,7 +54,7 @@
             "request": "launch",
             "program": "train_mycoco.py",
             "console": "integratedTerminal",
-            "justMyCode": false,
+            "justMyCode": true,
             "args": [
                 "--config",
                 "experiments/human36m/train/human36m_alg_mycoco.yaml"

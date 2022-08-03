@@ -23,7 +23,8 @@ from mvn.utils import volumetric
 #serials,intrinsics, extrinsics, Distortions
 class Multiview_coco(Dataset):
     def __init__(self, is_train, annfile, img_prefix, serials, train_serials, intrinsics, distortions, extrinsics,
-        image_shape=(256, 256),
+        ori_image_shape = (1520, 2688),
+        image_shape=(216, 384),
         cuboid_side=2000.0,
         scale_bbox=1.5,
         norm_image=True,
@@ -32,6 +33,7 @@ class Multiview_coco(Dataset):
         crop=True
         ):
         super(Multiview_coco, self).__init__()
+        self.ori_image_shape = ori_image_shape
         self.image_shape = None if image_shape is None else tuple(image_shape)
         self.scale_bbox = scale_bbox
         self.norm_image = norm_image
@@ -101,7 +103,9 @@ class Multiview_coco(Dataset):
         cnt  = len(self.distortions)
         maps = []
         for i in range(cnt):
-            map1, map2 = cv2.initUndistortRectifyMap(self.K[i], self.distortions[i], None, self.K[i], self.image_shape, cv2.CV_32FC1)
+            K = self.intrinsics[i] * self.image_shape[0] / self.ori_image_shape[0]
+            K[2,2] = 1.0
+            map1, map2 = cv2.initUndistortRectifyMap(K, self.distortions[i], None, K, self.image_shape[::-1], cv2.CV_32FC1)
             maps.append((map1, map2))
         return maps
 
@@ -247,30 +251,40 @@ class Multiview_coco(Dataset):
             if self.crop:
                 # crop image
                 image = crop_image(image, bbox)
-                retval_camera.update_after_crop(bbox)
+                # retval_camera.update_after_crop(bbox)
 
             if self.image_shape is not None:
                 # resize
                 image_shape_before_resize = image.shape[:2]
                 image = resize_image(image, self.image_shape)
-                retval_camera.update_after_resize(image_shape_before_resize, self.image_shape)
+                # retval_camera.update_after_resize(image_shape_before_resize, self.image_shape)
 
                 sample['image_shapes_before_resize'].append(image_shape_before_resize)
 
+            image = cv2.remap(image, self.undistortMaps[cameraIndex][0], self.undistortMaps[cameraIndex][1], cv2.INTER_LINEAR)
+            keypoints = db_rec['joints_2d'].reshape(-1)
+            keypoints_undistorted = cv2.undistortPoints(keypoints, self.K[cameraIndex], self.distortions[cameraIndex], None, self.K[cameraIndex])[0]
+            keypoints_undistorted1 = keypoints_undistorted * self.image_shape[0] / self.ori_image_shape[0]
+            if False:
+                keypoints_undistorted2 = (keypoints_undistorted1 + 0.5).astype(np.int32).reshape(-1)
+                assert self.ori_image_shape[0] == image_shape_before_resize[0]
+                cv2.circle(image, keypoints_undistorted2, 5, (0,0, 255),1 )
+                cv2.imshow("image", image)
+                cv2.waitKey(0)
             if self.norm_image:
                 image = normalize_image(image)
 
-            image = cv2.remap(image, self.undistortMaps[cameraIndex][0], self.undistortMaps[cameraIndex][1], cv2.INTER_LINEAR)
+
             bbox = db_rec['bbox']
             assert bbox is not None
             assert db_rec['joints_2d'] is not None
-            keypoints = db_rec['joints_2d'].reshape(self.num_keypoints, -1)
-            keypoints_undistorted = cv2.undistortPoints(keypoints, self.K[cameraIndex], self.distortions[cameraIndex])[0]
+
+
             sample['images'].append(image)
             sample['detections'].append(bbox + [1.0,]) # TODO add real confidences
             sample['cameras'].append(retval_camera)
             sample['proj_matrices'].append(retval_camera.projection)
-            sample['joints_2d'].append(keypoints_undistorted)
+            sample['joints_2d'].append(keypoints_undistorted1)
 
         for index, item in enumerate(items):
             db_rec = copy.deepcopy(self.db[item])

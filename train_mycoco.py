@@ -51,8 +51,8 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
     from pypose.multiview.serialFolders import SerialFolders    
     train_dataloader = None
     serials = "4105,4097,4112,4102,4103,4113,4101,4114,4100,4099,4098".split(",")
-    trainserials = "4114,4100,4099,4098".split(",")
-    
+    # trainserials = "4114,4100,4099,4098".split(",")
+    trainserials = serials
     
     cam_xmlfolder, imageResolution, imgResize = "/home/yl/working/pypose/configs/uvc", (2688, 1520), (2688, 1520)
     SerialFolders.setSerials(serials)
@@ -273,6 +273,7 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                 # plot visualization
                 if master:
                     if n_iters_total % config.vis_freq == 0:# or total_l2.item() > 500.0:
+                        print(f"n_iters_total:{n_iters_total}, loss:{total_loss}, lr:{opt.defaults['lr']}")
                         vis_kind = config.kind
                         if (config.transfer_cmu_to_human36m if hasattr(config, "transfer_cmu_to_human36m") else False):
                             vis_kind = "coco"
