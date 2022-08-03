@@ -218,7 +218,17 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                 # calculate loss
                 total_loss = 0.0
                 loss = criterion(keypoints_3d_pred * scale_keypoints_3d, keypoints_3d_gt * scale_keypoints_3d, keypoints_3d_binary_validity_gt)
+                heatmap_gt = torch.from_numpy(batch['target_heatmap']).to(heatmaps_pred.device)
+                hp = heatmaps_pred.squeeze().reshape(-1)
+                ht = heatmap_gt.squeeze().reshape(-1)
+                criterion1 = nn.MSELoss()
+                heatmap_loss = criterion1(hp, ht)
+                keypoints_2d_gt = batch['joints_2d']
+                tensor_gt = torch.Tensor(keypoints_2d_gt).to(keypoints_2d_pred.device)
+                keypoint2d_loss = criterion1(keypoints_2d_pred, tensor_gt)
                 total_loss += loss
+                total_loss += heatmap_loss
+                total_loss += keypoint2d_loss
                 metric_dict[f'{config.opt.criterion}'].append(loss.item())
 
                 # volumetric ce loss

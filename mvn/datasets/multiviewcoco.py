@@ -19,7 +19,7 @@ from mvn.utils.multiview import Camera, triangulate_ransac
 from mvn.utils.img import get_square_bbox, resize_image, crop_image, normalize_image, scale_bbox
 from mvn.utils import volumetric
 
-
+from mmpose.datasets.pipelines.top_down_transform import TopDownGenerateTarget
 #serials,intrinsics, extrinsics, Distortions
 class Multiview_coco(Dataset):
     def __init__(self, is_train, annfile, img_prefix, serials, train_serials, intrinsics, distortions, extrinsics,
@@ -30,9 +30,10 @@ class Multiview_coco(Dataset):
         norm_image=True,
         kind="mpii",
         undistort_images=False,
-        crop=True
+        crop=False
         ):
         super(Multiview_coco, self).__init__()
+
         self.ori_image_shape = ori_image_shape
         self.image_shape = None if image_shape is None else tuple(image_shape)
         self.scale_bbox = scale_bbox
@@ -94,6 +95,13 @@ class Multiview_coco(Dataset):
         self.grouping = self.get_group(self.db)
         self.group_size = len(self.grouping)
         self.u2a_mapping = {0:0}
+        sigma=2
+        kernel=(11, 11)
+        valid_radius_factor=0.0546875
+        target_type='GaussianHeatmap'
+        encoding='UDP'
+        unbiased_encoding=False
+        self.topDownGenerateTarget = TopDownGenerateTarget(sigma, kernel, valid_radius_factor, target_type, encoding, unbiased_encoding)
         pass
 
         print(f'=> num_images: {self.num_images}')
@@ -232,6 +240,9 @@ class Multiview_coco(Dataset):
         cameraIndex = self.serials.index(serial)
         return cameraIndex
 
+    def _make_result(self, db_rec):
+        results={}
+
     def __getitem__(self, idx):
         sample = defaultdict(list) # return value
         idx1 = idx % self.group_size
@@ -265,6 +276,7 @@ class Multiview_coco(Dataset):
             keypoints = db_rec['joints_2d'].reshape(-1)
             keypoints_undistorted = cv2.undistortPoints(keypoints, self.K[cameraIndex], self.distortions[cameraIndex], None, self.K[cameraIndex])[0]
             keypoints_undistorted1 = keypoints_undistorted * self.image_shape[0] / self.ori_image_shape[0]
+            target_heatmap, target_weights = self._udp_generate_target(keypoints_undistorted1, db_rec['joints_vis'])
             if False:
                 keypoints_undistorted2 = (keypoints_undistorted1 + 0.5).astype(np.int32).reshape(-1)
                 assert self.ori_image_shape[0] == image_shape_before_resize[0]
@@ -279,12 +291,13 @@ class Multiview_coco(Dataset):
             assert bbox is not None
             assert db_rec['joints_2d'] is not None
 
-
             sample['images'].append(image)
             sample['detections'].append(bbox + [1.0,]) # TODO add real confidences
             sample['cameras'].append(retval_camera)
             sample['proj_matrices'].append(retval_camera.projection)
             sample['joints_2d'].append(keypoints_undistorted1)
+            sample['target_heatmap'].append(target_heatmap)
+            sample['target_weights'].append(target_weights)
 
         for index, item in enumerate(items):
             db_rec = copy.deepcopy(self.db[item])
@@ -341,6 +354,90 @@ class Multiview_coco(Dataset):
             name_values[joint_names[sa[i]]] = joint_detection_rate[i]
         return name_values, np.mean(joint_detection_rate)
 
+    def _udp_generate_target(self, joints_3d, joints_3d_visible
+                             ):
+        """Generate the target heatmap via 'UDP' approach. Paper ref: Huang et
+        al. The Devil is in the Details: Delving into Unbiased Data Processing
+        for Human Pose Estimation (CVPR 2020).
+
+        Note:
+            - num keypoints: K
+            - heatmap height: H
+            - heatmap width: W
+            - num target channels: C
+            - C = K if target_type=='GaussianHeatmap'
+            - C = 3*K if target_type=='CombinedTarget'
+
+        Args:
+            cfg (dict): data config
+            joints_3d (np.ndarray[K, 3]): Annotated keypoints.
+            joints_3d_visible (np.ndarray[K, 3]): Visibility of keypoints.
+            factor (float): kernel factor for GaussianHeatmap target or
+                valid radius factor for CombinedTarget.
+            target_type (str): 'GaussianHeatmap' or 'CombinedTarget'.
+                GaussianHeatmap: Heatmap target with gaussian distribution.
+                CombinedTarget: The combination of classification target
+                (response map) and regression target (offset map).
+
+        Returns:
+            tuple: A tuple containing targets.
+
+            - target (np.ndarray[C, H, W]): Target heatmaps.
+            - target_weight (np.ndarray[K, 1]): (1: visible, 0: invisible)
+        """
+        num_joints = self.num_joints
+        image_size = np.array(self.image_shape[::-1])
+        heatmap_size = image_size // 4
+        joint_weights = [1.0]
+        use_different_joint_weights = False
+
+        target_weight = np.ones((num_joints, 1), dtype=np.float32)
+        target_weight[:, 0] = joints_3d_visible[:, 0]
+
+        if True:
+            target = np.zeros((num_joints, heatmap_size[1], heatmap_size[0]),
+                              dtype=np.float32)
+            factor= 2
+            tmp_size = factor * 3
+
+            # prepare for gaussian
+            size = 2 * tmp_size + 1
+            x = np.arange(0, size, 1, np.float32)
+            y = x[:, None]
+
+            for joint_id in range(num_joints):
+                feat_stride = (image_size - 1.0) / (heatmap_size - 1.0)
+                mu_x = int(joints_3d[joint_id][0] / feat_stride[0] + 0.5)
+                mu_y = int(joints_3d[joint_id][1] / feat_stride[1] + 0.5)
+                # Check that any part of the gaussian is in-bounds
+                ul = [int(mu_x - tmp_size), int(mu_y - tmp_size)]
+                br = [int(mu_x + tmp_size + 1), int(mu_y + tmp_size + 1)]
+                if ul[0] >= heatmap_size[0] or ul[1] >= heatmap_size[1] \
+                        or br[0] < 0 or br[1] < 0:
+                    # If not, just return the image as is
+                    target_weight[joint_id] = 0
+                    continue
+
+                # # Generate gaussian
+                mu_x_ac = joints_3d[joint_id][0] / feat_stride[0]
+                mu_y_ac = joints_3d[joint_id][1] / feat_stride[1]
+                x0 = y0 = size // 2
+                x0 += mu_x_ac - mu_x
+                y0 += mu_y_ac - mu_y
+                g = np.exp(-((x - x0)**2 + (y - y0)**2) / (2 * factor**2))
+
+                # Usable gaussian range
+                g_x = max(0, -ul[0]), min(br[0], heatmap_size[0]) - ul[0]
+                g_y = max(0, -ul[1]), min(br[1], heatmap_size[1]) - ul[1]
+                # Image range
+                img_x = max(0, ul[0]), min(br[0], heatmap_size[0])
+                img_y = max(0, ul[1]), min(br[1], heatmap_size[1])
+
+                v = target_weight[joint_id]
+                if v > 0.5:
+                    target[joint_id][img_y[0]:img_y[1], img_x[0]:img_x[1]] = \
+                        g[g_y[0]:g_y[1], g_x[0]:g_x[1]]
+        return target, target_weight
 def test():
     
     from pypose.multiview.paraReader import ParaReader    

@@ -3,7 +3,7 @@ kind: "human36m"
 vis_freq: 10
 vis_n_elements: 10
 
-image_shape: [216,384]
+image_shape: [224,384]
 
 opt:
   criterion: "MSESmooth"
@@ -15,7 +15,7 @@ opt:
   batch_size: 1
   val_batch_size: 1
 
-  lr: 0.00002
+  lr: 0.0001
 
   scale_keypoints_3d: 0.1
 
