@@ -11,6 +11,9 @@
             "program": "${file}",
             "console": "integratedTerminal",
             "justMyCode": true,
+            "env": {
+                "PYTHONPATH": "${cwd}"
+            },            
             "args":[
                 "/2t/data/datasets/h36m",
                 "/2t/data/datasets/h36m/h36m",

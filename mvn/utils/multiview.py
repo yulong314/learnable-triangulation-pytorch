@@ -1,6 +1,8 @@
 import numpy as np
 import torch
-
+import random
+import time
+from scipy.optimize import least_squares
 
 class Camera:
     def __init__(self, R, t, K, dist=None, name=""):
@@ -191,3 +193,61 @@ def calc_reprojection_error_matrix(keypoints_3d, keypoints_2d_list, proj_matrici
         reprojection_error_matrix.append(reprojection_error)
 
     return np.vstack(reprojection_error_matrix).T
+
+def triangulate_ransac(proj_matricies, points, n_iters=10, reprojection_error_epsilon=15, direct_optimization=True):
+    assert len(proj_matricies) == len(points)
+    assert len(points) >= 2
+
+    proj_matricies = np.array(proj_matricies)
+    points = np.array(points)
+
+    n_views = len(points)
+
+    # determine inliers
+    view_set = set(range(n_views))
+    inlier_set = set()
+    for i in range(n_iters):
+        sampled_views = sorted(random.sample(view_set, 2))
+
+        keypoint_3d_in_base_camera = triangulate_point_from_multiple_views_linear(proj_matricies[sampled_views], points[sampled_views])
+        reprojection_error_vector = calc_reprojection_error_matrix(np.array([keypoint_3d_in_base_camera]), points, proj_matricies)[0]
+
+        new_inlier_set = set(sampled_views)
+        for view in view_set:
+            current_reprojection_error = reprojection_error_vector[view]
+            if current_reprojection_error < reprojection_error_epsilon:
+                new_inlier_set.add(view)
+
+        if len(new_inlier_set) > len(inlier_set):
+            inlier_set = new_inlier_set
+
+    # triangulate using inlier_set
+    if len(inlier_set) == 0:
+        inlier_set = view_set.copy()
+
+    inlier_list = np.array(sorted(inlier_set))
+    inlier_proj_matricies = proj_matricies[inlier_list]
+    inlier_points = points[inlier_list]
+
+    keypoint_3d_in_base_camera = triangulate_point_from_multiple_views_linear(inlier_proj_matricies, inlier_points)
+    reprojection_error_vector = calc_reprojection_error_matrix(np.array([keypoint_3d_in_base_camera]), inlier_points, inlier_proj_matricies)[0]
+    reprojection_error_mean = np.mean(reprojection_error_vector)
+
+    keypoint_3d_in_base_camera_before_direct_optimization = keypoint_3d_in_base_camera
+    reprojection_error_before_direct_optimization = reprojection_error_mean
+
+    # direct reprojection error minimization
+    if direct_optimization:
+        def residual_function(x):
+            reprojection_error_vector = calc_reprojection_error_matrix(np.array([x]), inlier_points, inlier_proj_matricies)[0]
+            residuals = reprojection_error_vector
+            return residuals
+
+        x_0 = np.array(keypoint_3d_in_base_camera)
+        res = least_squares(residual_function, x_0, loss='huber', method='trf')
+
+        keypoint_3d_in_base_camera = res.x
+        reprojection_error_vector = calc_reprojection_error_matrix(np.array([keypoint_3d_in_base_camera]), inlier_points, inlier_proj_matricies)[0]
+        reprojection_error_mean = np.mean(reprojection_error_vector)
+
+    return keypoint_3d_in_base_camera, inlier_list
