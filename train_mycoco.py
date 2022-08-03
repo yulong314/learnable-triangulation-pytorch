@@ -47,23 +47,31 @@ def parse_args():
 
 
 def setup_human36m_dataloaders(config, is_train, distributed_train):
+    from pypose.multiview.paraReader import ParaReader    
+    from pypose.multiview.serialFolders import SerialFolders    
     train_dataloader = None
+    serials = "4105,4097,4112,4102,4103,4113,4101,4114,4100,4099,4098".split(",")
+    trainserials = "4114,4100,4099,4098".split(",")
+    
+    
+    cam_xmlfolder, imageResolution, imgResize = "/home/yl/working/pypose/configs/uvc", (2688, 1520), (2688, 1520)
+    SerialFolders.setSerials(serials)
+    paraReader = ParaReader(cam_xmlfolder, serials, imageResolution, imgResize)
+    paraReader.readPara()    
+       
     if is_train:
+        annfile = "/2t/data/recordedSamples/pose2/20220708/train.json"
+        img_prefix = os.path.dirname(annfile)
         # train
-        train_dataset = human36m.Human36MMultiViewDataset(
-            h36m_root=config.dataset.train.h36m_root,
-            pred_results_path=config.dataset.train.pred_results_path if hasattr(config.dataset.train, "pred_results_path") else None,
-            train=True,
-            test=False,
+        is_train = True 
+        train_dataset = multiviewcoco.Multiview_coco(is_train, annfile, img_prefix, serials, trainserials, paraReader.intrinsics, paraReader.distortions, paraReader.extrinsics,
             image_shape=config.image_shape if hasattr(config, "image_shape") else (256, 256),
-            labels_path=config.dataset.train.labels_path,
-            with_damaged_actions=config.dataset.train.with_damaged_actions,
             scale_bbox=config.dataset.train.scale_bbox,
             kind=config.kind,
             undistort_images=config.dataset.train.undistort_images,
-            ignore_cameras=config.dataset.train.ignore_cameras if hasattr(config.dataset.train, "ignore_cameras") else [],
-            crop=config.dataset.train.crop if hasattr(config.dataset.train, "crop") else True,
+            crop=config.dataset.train.crop if hasattr(config.dataset.train, "crop") else False,    
         )
+
 
         train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset) if distributed_train else None
 
@@ -81,20 +89,15 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
         )
 
     # val
-    val_dataset = human36m.Human36MMultiViewDataset(
-        h36m_root=config.dataset.val.h36m_root,
-        pred_results_path=config.dataset.val.pred_results_path if hasattr(config.dataset.val, "pred_results_path") else None,
-        train=False,
-        test=True,
-        image_shape=config.image_shape if hasattr(config, "image_shape") else (256, 256),
-        labels_path=config.dataset.val.labels_path,
-        with_damaged_actions=config.dataset.val.with_damaged_actions,
-        retain_every_n_frames_in_test=config.dataset.val.retain_every_n_frames_in_test,
-        scale_bbox=config.dataset.val.scale_bbox,
-        kind=config.kind,
-        undistort_images=config.dataset.val.undistort_images,
-        ignore_cameras=config.dataset.val.ignore_cameras if hasattr(config.dataset.val, "ignore_cameras") else [],
-        crop=config.dataset.val.crop if hasattr(config.dataset.val, "crop") else True,
+    is_train = False 
+    annfile = "/2t/data/recordedSamples/pose2/20220708/train.json"
+    img_prefix = os.path.dirname(annfile)
+    val_dataset = multiviewcoco.Multiview_coco(is_train, annfile, img_prefix, serials, trainserials, paraReader.intrinsics, paraReader.distortions, paraReader.extrinsics, 
+            image_shape=config.image_shape if hasattr(config, "image_shape") else (256, 256),
+            scale_bbox=config.dataset.val.scale_bbox,
+            kind=config.kind,
+            undistort_images=config.dataset.val.undistort_images,
+            crop=config.dataset.val.crop if hasattr(config.dataset.val, "crop") else False,       
     )
 
     val_dataloader = DataLoader(

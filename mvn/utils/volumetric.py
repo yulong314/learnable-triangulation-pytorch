@@ -6,7 +6,7 @@ from mvn.utils import multiview
 
 
 class Point3D:
-    def __init__(self, point, size=3, color=(0, 0, 255)):
+    def __init__(self, point, size=30, color=(0, 0, 255)):
         self.point = point
         self.size = size
         self.color = color

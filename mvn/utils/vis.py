@@ -283,10 +283,11 @@ def draw_2d_pose(keypoints, ax, kind='cmu', keypoints_mask=None, point_size=2, l
     ax.scatter(keypoints[keypoints_mask][:, 0], keypoints[keypoints_mask][:, 1], c='red', s=point_size)
 
     # connections
-    for (index_from, index_to) in connectivity:
-        if keypoints_mask[index_from] and keypoints_mask[index_to]:
-            xs, ys = [np.array([keypoints[index_from, j], keypoints[index_to, j]]) for j in range(2)]
-            ax.plot(xs, ys, c=color, lw=line_width)
+    if len(keypoints_mask) > 1:
+        for (index_from, index_to) in connectivity:
+            if keypoints_mask[index_from] and keypoints_mask[index_to]:
+                xs, ys = [np.array([keypoints[index_from, j], keypoints[index_to, j]]) for j in range(2)]
+                ax.plot(xs, ys, c=color, lw=line_width)
 
     if radius is not None:
         root_keypoint_index = 0
@@ -298,7 +299,7 @@ def draw_2d_pose(keypoints, ax, kind='cmu', keypoints_mask=None, point_size=2, l
     ax.set_aspect('equal')
 
 
-def draw_2d_pose_cv2(keypoints, canvas, kind='cmu', keypoints_mask=None, point_size=2, point_color=(255, 255, 255), line_width=1, radius=None, color=None, anti_aliasing_scale=1):
+def draw_2d_pose_cv2(keypoints, canvas, kind='cmu', keypoints_mask=None, point_size=20, point_color=(255, 255, 255), line_width=1, radius=None, color=None, anti_aliasing_scale=1):
     canvas = canvas.copy()
 
     shape = np.array(canvas.shape[:2])
@@ -317,17 +318,18 @@ def draw_2d_pose_cv2(keypoints, canvas, kind='cmu', keypoints_mask=None, point_s
         keypoints_mask = [True] * len(keypoints)
 
     # connections
-    for i, (index_from, index_to) in enumerate(connectivity):
-        if keypoints_mask[index_from] and keypoints_mask[index_to]:
-            pt_from = tuple(np.array(keypoints[index_from, :]).astype(int))
-            pt_to = tuple(np.array(keypoints[index_to, :]).astype(int))
+    if len(keypoints_mask) > 1:
+        for i, (index_from, index_to) in enumerate(connectivity):
+            if keypoints_mask[index_from] and keypoints_mask[index_to]:
+                pt_from = tuple(np.array(keypoints[index_from, :]).astype(int))
+                pt_to = tuple(np.array(keypoints[index_to, :]).astype(int))
 
-            if kind in COLOR_DICT:
-                color = COLOR_DICT[kind][i]
-            else:
-                color = (0, 0, 255)
+                if kind in COLOR_DICT:
+                    color = COLOR_DICT[kind][i]
+                else:
+                    color = (0, 0, 255)
 
-            cv2.line(canvas, pt_from, pt_to, color=color, thickness=line_width)
+                cv2.line(canvas, pt_from, pt_to, color=color, thickness=line_width)
 
     if kind == 'coco':
         mid_collarbone = (keypoints[5, :] + keypoints[6, :]) / 2

@@ -22,9 +22,24 @@ from mvn.utils import volumetric
 
 #serials,intrinsics, extrinsics, Distortions
 class Multiview_coco(Dataset):
-    def __init__(self, is_train, annfile, img_prefix, serials, train_serials, intrinsics, distortions, extrinsics, transform=None):
+    def __init__(self, is_train, annfile, img_prefix, serials, train_serials, intrinsics, distortions, extrinsics,
+        image_shape=(256, 256),
+        cuboid_side=2000.0,
+        scale_bbox=1.5,
+        norm_image=True,
+        kind="mpii",
+        undistort_images=False,
+        crop=True
+        ):
         super(Multiview_coco, self).__init__()
-        
+        self.image_shape = None if image_shape is None else tuple(image_shape)
+        self.scale_bbox = scale_bbox
+        self.norm_image = norm_image
+        self.cuboid_side = cuboid_side
+        self.kind = kind
+        self.undistort_images = undistort_images
+        self.crop = crop
+       
         self.intrinsics = np.array(intrinsics)
         self.extrinsics = np.array(extrinsics)
         self.distortions = np.array(distortions)
@@ -33,7 +48,7 @@ class Multiview_coco(Dataset):
         self.img_prefix = img_prefix
         self.serials = serials
         self.train_serials = train_serials
-        self.serialsIndexes = (self.serials.index(serial) for serial in  self.train_serials)
+        self.serialsIndexes = [self.serials.index(serial) for serial in  self.train_serials]
         self.dataset_name = 'Multiview_coco_h36m'
         self.num_joints = 1
         self.img_prefix = img_prefix
@@ -42,10 +57,11 @@ class Multiview_coco(Dataset):
         self.num_keypoints = 1
         self.keypoints_3d_pred = None
         proj_matricies1 = self.intrinsics @self.extrinsics[:, 0:3, :]
-
+        
         # self.proj_matricies = np.concatenate((proj_matricies1,row4), axis = 1)
         self.proj_matricies = proj_matricies1
         self.R, self.T, self.K , self.distortions = self.get_intrinsics(self.intrinsics, self.extrinsics, self.distortions)
+        self.undistortMaps = self.getUndistortMaps()
         if is_train:
             self.times = 10
         else:
@@ -80,6 +96,14 @@ class Multiview_coco(Dataset):
 
         print(f'=> num_images: {self.num_images}')
         print(f'=> load {len(self.db)} samples')
+
+    def getUndistortMaps(self):
+        cnt  = len(self.distortions)
+        maps = []
+        for i in range(cnt):
+            map1, map2 = cv2.initUndistortRectifyMap(self.K[i], self.distortions[i], None, self.K[i], self.image_shape, cv2.CV_32FC1)
+            maps.append((map1, map2))
+        return maps
 
     def get_intrinsics(self, intrinsics, extrinsics, distortions):
         cnt = len(intrinsics)
@@ -217,30 +241,54 @@ class Multiview_coco(Dataset):
             cameraIndex = self._getCameraIndex(image_file)
             retval_camera = Camera(self.R[cameraIndex], self.T[cameraIndex], self.K[cameraIndex], self.distortions[cameraIndex], self.serials[cameraIndex])
 
-            data_numpy = cv2.imread(
+            image = cv2.imread(
                 image_file, cv2.IMREAD_COLOR | cv2.IMREAD_IGNORE_ORIENTATION)
+            assert image is not None
+            if self.crop:
+                # crop image
+                image = crop_image(image, bbox)
+                retval_camera.update_after_crop(bbox)
+
+            if self.image_shape is not None:
+                # resize
+                image_shape_before_resize = image.shape[:2]
+                image = resize_image(image, self.image_shape)
+                retval_camera.update_after_resize(image_shape_before_resize, self.image_shape)
+
+                sample['image_shapes_before_resize'].append(image_shape_before_resize)
+
+            if self.norm_image:
+                image = normalize_image(image)
+
+            image = cv2.remap(image, self.undistortMaps[cameraIndex][0], self.undistortMaps[cameraIndex][1], cv2.INTER_LINEAR)
             bbox = db_rec['bbox']
-            sample['images'].append(data_numpy)
+            assert bbox is not None
+            assert db_rec['joints_2d'] is not None
+            keypoints = db_rec['joints_2d'].reshape(self.num_keypoints, -1)
+            keypoints_undistorted = cv2.undistortPoints(keypoints, self.K[cameraIndex], self.distortions[cameraIndex])[0]
+            sample['images'].append(image)
             sample['detections'].append(bbox + [1.0,]) # TODO add real confidences
             sample['cameras'].append(retval_camera)
             sample['proj_matrices'].append(retval_camera.projection)
-            sample['joints_2d'].append(db_rec['joints_2d'])
+            sample['joints_2d'].append(keypoints_undistorted)
 
         for index, item in enumerate(items):
             db_rec = copy.deepcopy(self.db[item])
             points.append(db_rec['joints_2d'])
-        time0 = time.time()
+        # time0 = time.time()
         keypoint_3d_in_base_camera, inlier_list = triangulate_ransac(self.proj_matricies, points)
-        print("ransac triangulation time:", time.time() - time0)
-        sample['keypoints_3d'] = np.pad(
+        # print("ransac triangulation time:", time.time() - time0)
+        sample['keypoints_3d'] =  np.pad(
             keypoint_3d_in_base_camera,
-            ((0,1)), 'constant', constant_values=1.0)       
+            ((0,1)), 'constant', constant_values=1.0).reshape(self.num_keypoints, -1)
         sample['indexes'] = idx
 
         if self.keypoints_3d_pred is not None:
             sample['pred_keypoints_3d'] = self.keypoints_3d_pred[idx]
 
-        sample.default_factory = None
+        cnt = len(sample)
+        assert cnt > 5
+        # sample.default_factory = None
         return sample
 
     def __len__(self):
@@ -295,7 +343,7 @@ def test():
     paraReader = ParaReader(cam_xmlfolder, serials, imageResolution, imgResize)
     paraReader.readPara()    
     is_train = True
-    coco_h36m = Multiview_coco(is_train, annfile, img_prefix, serials, trainserials, paraReader.intrinsics, paraReader.distortions, paraReader.extrinsics, True)
+    coco_h36m = Multiview_coco(is_train, annfile, img_prefix, serials, trainserials, paraReader.intrinsics, paraReader.distortions, paraReader.extrinsics)
     cnt = len(coco_h36m)
     for data in coco_h36m:
         print(data['indexes'])

@@ -47,6 +47,18 @@
                 "--config",
                 "experiments/human36m/train/human36m_vol_softmax.yaml"
             ]
-        }        
+        },
+        {
+            "name": "train_mycoco",
+            "type": "python",
+            "request": "launch",
+            "program": "train_mycoco.py",
+            "console": "integratedTerminal",
+            "justMyCode": false,
+            "args": [
+                "--config",
+                "experiments/human36m/train/human36m_alg_mycoco.yaml"
+            ]
+        }                     
     ]
 }

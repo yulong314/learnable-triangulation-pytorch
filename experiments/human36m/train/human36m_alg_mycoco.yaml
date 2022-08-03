@@ -1,9 +1,9 @@
 title: "human36m_alg"
 kind: "human36m"
-vis_freq: 100
+vis_freq: 1
 vis_n_elements: 10
 
-image_shape: [384, 288]
+image_shape: [288,384]
 
 opt:
   criterion: "MSESmooth"

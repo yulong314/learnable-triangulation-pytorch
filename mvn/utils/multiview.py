@@ -21,6 +21,7 @@ class Camera:
             self.dist = np.array(self.dist).copy().flatten()
 
         self.name = name
+        self.imageShape = None
 
     def update_after_crop(self, bbox):
         left, upper, right, lower = bbox
@@ -44,6 +45,7 @@ class Camera:
         new_cy = cy * (new_height / height)
 
         self.K[0, 0], self.K[1, 1], self.K[0, 2], self.K[1, 2] = new_fx, new_fy, new_cx, new_cy
+        
 
     @property
     def projection(self):
