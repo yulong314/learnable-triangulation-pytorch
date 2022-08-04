@@ -1,7 +1,7 @@
 title: "human36m_alg"
 kind: "human36m"
-vis_freq: 10
-vis_n_elements: 10
+vis_freq: 100
+vis_n_elements: 11
 
 image_shape: [224,384]
 
@@ -22,8 +22,8 @@ opt:
 model:
   name: "alg"
 
-  init_weights: false
-  checkpoint: ""
+  init_weights: true
+  checkpoint: "/home/yl/working/opensource/learnable-triangulation-pytorch/logs/human36m_alg_AlgebraicTriangulationNet@03.08.2022-23:00:11/checkpoints/0049/weights.pth"
 
   use_confidences: true
   heatmap_multiplier: 100.0
@@ -54,7 +54,7 @@ dataset:
     randomize_n_views: false
     min_n_views: null
     max_n_views: null
-    num_workers: 1
+    num_workers: 8
 
   val:
     h36m_root: "/2t/data/datasets/h36m/processed"
@@ -68,6 +68,6 @@ dataset:
     randomize_n_views: false
     min_n_views: null
     max_n_views: null
-    num_workers: 1
+    num_workers: 8
 
     retain_every_n_frames_in_test: 1

@@ -116,9 +116,9 @@ def visualize_batch(images_batch, heatmaps_batch, keypoints_2d_batch, proj_matri
     images = denormalize_image(images).astype(np.uint8)
     images = images[..., ::-1]  # bgr -> rgb
 
-    for view_i in range(n_cols):
-        axes[row_i][view_i].imshow(images[view_i])
-    row_i += 1
+    # for view_i in range(n_cols):
+    #     axes[row_i][view_i].imshow(images[view_i])
+    # row_i += 1
 
     # 2D keypoints (pred)
     if keypoints_2d_batch is not None:
@@ -209,7 +209,7 @@ def visualize_heatmaps(images_batch, heatmaps_batch,
                     axes[row, col].set_title(joint_name)
 
                 axes[row, col].imshow(resize_image(images[row], heatmap_shape))
-                axes[row, col].imshow(heatmaps[row, col - 1], alpha=0.5)
+                axes[row, col].imshow(heatmaps[row, col - 1], alpha=0.8)
 
     fig.tight_layout()
 
@@ -264,7 +264,7 @@ def visualize_volumes(images_batch, volumes_batch, proj_matricies_batch,
     return fig_image
 
 
-def draw_2d_pose(keypoints, ax, kind='cmu', keypoints_mask=None, point_size=2, line_width=1, radius=None, color=None):
+def draw_2d_pose(keypoints, ax, kind='cmu', keypoints_mask=None, point_size=8, line_width=1, radius=None, color=None):
     """
     Visualizes a 2d skeleton
 

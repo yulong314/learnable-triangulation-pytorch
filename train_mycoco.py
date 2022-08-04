@@ -58,7 +58,7 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
     SerialFolders.setSerials(serials)
     paraReader = ParaReader(cam_xmlfolder, serials, imageResolution, imgResize)
     paraReader.readPara()    
-       
+    train_dataloader, val_dataloader, train_sampler = None, None, None
     if is_train:
         annfile = "/2t/data/recordedSamples/pose2/20220708/train.json"
         img_prefix = os.path.dirname(annfile)
@@ -90,7 +90,7 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
 
     # val
     is_train = False 
-    annfile = "/2t/data/recordedSamples/pose2/20220708/train.json"
+    annfile = "/2t/data/recordedSamples/pose2/20220708/val.json"
     img_prefix = os.path.dirname(annfile)
     val_dataset = multiviewcoco.Multiview_coco(is_train, annfile, img_prefix, serials, trainserials, paraReader.intrinsics, paraReader.distortions, paraReader.extrinsics, 
             image_shape=config.image_shape if hasattr(config, "image_shape") else (256, 256),
@@ -154,7 +154,7 @@ def setup_experiment(config, model_name, is_train=True):
     return experiment_dir, writer
 
 
-def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_total=0, is_train=True, caption='', master=False, experiment_dir=None, writer=None):
+def one_epoch(scheduler, model, criterion, opt, config, dataloader, device, epoch, n_iters_total=0, is_train=True, caption='', master=False, experiment_dir=None, writer=None):
     name = "train" if is_train else "val"
     model_type = config.model.name
 
@@ -177,7 +177,7 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
             iterator = islice(iterator, config.opt.n_iters_per_epoch)
 
         for iter_i, batch in iterator:
-            with autograd.detect_anomaly():
+            # with autograd.detect_anomaly():
                 # measure data loading time
                 data_time = time.time() - end
 
@@ -243,7 +243,9 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                     total_loss += weight * loss
 
                 metric_dict['total_loss'].append(total_loss.item())
-
+                metric_dict['heatmap_loss'].append(heatmap_loss.item())
+                metric_dict['keypoint2d_loss'].append(keypoint2d_loss.item())
+                metric_dict['3dloss'].append(loss.item())
                 if is_train:
                     opt.zero_grad()
                     total_loss.backward()
@@ -252,8 +254,9 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                         torch.nn.utils.clip_grad_norm_(model.parameters(), config.opt.grad_clip / config.opt.lr)
 
                     metric_dict['grad_norm_times_lr'].append(config.opt.lr * misc.calc_gradient_norm(filter(lambda x: x[1].requires_grad, model.named_parameters())))
-
+                    
                     opt.step()
+                    scheduler.step()
 
                 # calculate metrics
                 l2 = KeypointsL2Loss()(keypoints_3d_pred * scale_keypoints_3d, keypoints_3d_gt * scale_keypoints_3d, keypoints_3d_binary_validity_gt)
@@ -278,12 +281,14 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                 # save answers for evalulation
                 if not is_train:
                     results['keypoints_3d'].append(keypoints_3d_pred.detach().cpu().numpy())
+                    results['keypoints_2d'].append(keypoints_2d_pred.detach().cpu().numpy())
                     results['indexes'].append(batch['indexes'])
 
                 # plot visualization
                 if master:
-                    if n_iters_total % config.vis_freq == 0:# or total_l2.item() > 500.0:
-                        print(f"n_iters_total:{n_iters_total}, loss:{total_loss}, lr:{opt.defaults['lr']}")
+                    if n_iters_total % config.vis_freq == 0 :# or total_l2.item() > 500.0:
+                        if is_train:
+                            print(f"n_iters_total:{n_iters_total}, loss:{total_loss}, lr:{scheduler.get_lr()}")
                         vis_kind = config.kind
                         if (config.transfer_cmu_to_human36m if hasattr(config, "transfer_cmu_to_human36m") else False):
                             vis_kind = "coco"
@@ -338,12 +343,12 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                     end = time.time()
 
                     # dump to tensorboard per-iter time stats
-                    writer.add_scalar(f"{name}/batch_time", batch_time, n_iters_total)
-                    writer.add_scalar(f"{name}/data_time", data_time, n_iters_total)
+                    # writer.add_scalar(f"{name}/batch_time", batch_time, n_iters_total)
+                    # writer.add_scalar(f"{name}/data_time", data_time, n_iters_total)
 
                     # dump to tensorboard per-iter stats about sizes
-                    writer.add_scalar(f"{name}/batch_size", batch_size, n_iters_total)
-                    writer.add_scalar(f"{name}/n_views", n_views, n_iters_total)
+                    # writer.add_scalar(f"{name}/batch_size", batch_size, n_iters_total)
+                    # writer.add_scalar(f"{name}/n_views", n_views, n_iters_total)
 
                     n_iters_total += 1
 
@@ -351,10 +356,11 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
     if master:
         if not is_train:
             results['keypoints_3d'] = np.concatenate(results['keypoints_3d'], axis=0)
+            results['keypoints_2d'] = np.concatenate(results['keypoints_2d'], axis=0)
             results['indexes'] = np.concatenate(results['indexes'])
 
             try:
-                scalar_metric, full_metric = dataloader.dataset.evaluate(results['keypoints_3d'])
+                scalar_metric, full_metric = dataloader.dataset.evaluate(results['keypoints_3d'], results['keypoints_2d'])
             except Exception as e:
                 print("Failed to evaluate. Reason: ", e)
                 scalar_metric, full_metric = 0.0, {}
@@ -373,8 +379,8 @@ def one_epoch(model, criterion, opt, config, dataloader, device, epoch, n_iters_
                 json.dump(full_metric, fout, indent=4, sort_keys=True)
 
         # dump to tensorboard per-epoch stats
-        for title, value in metric_dict.items():
-            writer.add_scalar(f"{name}/{title}_epoch", np.mean(value), epoch)
+        # for title, value in metric_dict.items():
+        #     writer.add_scalar(f"{name}/{title}_epoch", np.mean(value), epoch)
 
     return n_iters_total
 
@@ -452,10 +458,15 @@ def main(args):
         else:
             opt = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config.opt.lr)
 
-
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(opt, milestones=[3000,63000, 70000], gamma=0.1)
+    # for i in range(500):
+    #     scheduler.step()
+    #     print(i, scheduler.get_lr())
+ 
     # datasets
     print("Loading data...")
-    train_dataloader, val_dataloader, train_sampler = setup_dataloaders(config, distributed_train=is_distributed)
+    is_train = not args.eval
+    train_dataloader, val_dataloader, train_sampler = setup_dataloaders(config, is_train = is_train, distributed_train=is_distributed)
 
     # experiment
     experiment_dir, writer = None, None
@@ -473,8 +484,8 @@ def main(args):
             if train_sampler is not None:
                 train_sampler.set_epoch(epoch)
 
-            n_iters_total_train = one_epoch(model, criterion, opt, config, train_dataloader, device, epoch, n_iters_total=n_iters_total_train, is_train=True, master=master, experiment_dir=experiment_dir, writer=writer)
-            n_iters_total_val = one_epoch(model, criterion, opt, config, val_dataloader, device, epoch, n_iters_total=n_iters_total_val, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer)
+            n_iters_total_train = one_epoch(scheduler, model, criterion, opt, config, train_dataloader, device, epoch, n_iters_total=n_iters_total_train, is_train=True, master=master, experiment_dir=experiment_dir, writer=writer)
+            # n_iters_total_val = one_epoch(scheduler, model, criterion, opt, config, val_dataloader, device, epoch, n_iters_total=n_iters_total_val, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer)
 
             if master:
                 checkpoint_dir = os.path.join(experiment_dir, "checkpoints", "{:04}".format(epoch))
@@ -482,12 +493,13 @@ def main(args):
 
                 torch.save(model.state_dict(), os.path.join(checkpoint_dir, "weights.pth"))
 
+            
             print(f"{n_iters_total_train} iters done.")
     else:
         if args.eval_dataset == 'train':
-            one_epoch(model, criterion, opt, config, train_dataloader, device, 0, n_iters_total=0, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer)
+            one_epoch(None,model, criterion, opt, config, train_dataloader, device, 0, n_iters_total=0, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer)
         else:
-            one_epoch(model, criterion, opt, config, val_dataloader, device, 0, n_iters_total=0, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer)
+            one_epoch(None, model, criterion, opt, config, val_dataloader, device, 0, n_iters_total=0, is_train=False, master=master, experiment_dir=experiment_dir, writer=writer)
 
     print("Done.")
 

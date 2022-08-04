@@ -25,7 +25,7 @@
             "name": "eval",
             "type": "python",
             "request": "launch",
-            "program": "train.py",
+            "program": "train_mycoco.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
@@ -33,7 +33,7 @@
                 "--eval_dataset",
                 "val",
                 "--config",
-                "experiments/human36m/eval/human36m_alg.yaml"
+                "experiments/human36m/train/human36m_alg_mycoco.yaml"
             ]
         },
         {

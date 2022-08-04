@@ -66,7 +66,7 @@ class Multiview_coco(Dataset):
         self.R, self.T, self.K , self.distortions = self.get_intrinsics(self.intrinsics, self.extrinsics, self.distortions)
         self.undistortMaps = self.getUndistortMaps()
         if is_train:
-            self.times = 10
+            self.times = 1
         else:
             self.times = 1
         coco_style = True
@@ -103,7 +103,7 @@ class Multiview_coco(Dataset):
         unbiased_encoding=False
         self.topDownGenerateTarget = TopDownGenerateTarget(sigma, kernel, valid_radius_factor, target_type, encoding, unbiased_encoding)
         pass
-
+        self.gt_3d, self.gt_2d = self._calc_gt_3d()
         print(f'=> num_images: {self.num_images}')
         print(f'=> load {len(self.db)} samples')
 
@@ -242,7 +242,35 @@ class Multiview_coco(Dataset):
 
     def _make_result(self, db_rec):
         results={}
+    def _isvalid3dPoints(self, kp3d):
+        assert abs(kp3d[0]) < 1000 and abs(kp3d[1]) < 1000 and kp3d[2] < 2000 and kp3d[2] > 200, 'invalid 3d points'
+        return True
 
+    def _calc_gt_3d(self):
+        gt_3d = []
+        gt_2d = []
+        for idx in range(self.group_size):
+            items = self.grouping[idx]
+            points_resized = []
+            points_unresized = []
+            assert len(items) == len(self.serials)
+            for index, item in enumerate(items):
+                db_rec = copy.deepcopy(self.db[item])
+                image_file = osp.join(self.img_prefix, db_rec['image'])
+                cameraIndex = self._getCameraIndex(image_file)                
+                assert cameraIndex == index
+                keypoints = db_rec['joints_2d'].reshape(-1)
+                keypoints_undistorted = cv2.undistortPoints(keypoints, self.K[cameraIndex], self.distortions[cameraIndex], None, self.K[cameraIndex])[0]                
+                keypoints_undistorted1 = keypoints_undistorted * self.image_shape[0] / self.ori_image_shape[0]
+                points_resized.append(keypoints_undistorted1.reshape(-1))
+                points_unresized.append(keypoints_undistorted.reshape(-1))
+            # time0 = time.time()
+            keypoint_3d_in_base_camera, inlier_list = triangulate_ransac(self.proj_matricies, points_unresized)
+            assert self._isvalid3dPoints(keypoint_3d_in_base_camera)
+            gt_3d.append(keypoint_3d_in_base_camera)
+            gt_2d.append(points_resized)
+        return np.array(gt_3d), np.array(gt_2d)
+        pass
     def __getitem__(self, idx):
         sample = defaultdict(list) # return value
         idx1 = idx % self.group_size
@@ -262,13 +290,13 @@ class Multiview_coco(Dataset):
             if self.crop:
                 # crop image
                 image = crop_image(image, bbox)
-                # retval_camera.update_after_crop(bbox)
+                retval_camera.update_after_crop(bbox)
 
             if self.image_shape is not None:
                 # resize
                 image_shape_before_resize = image.shape[:2]
                 image = resize_image(image, self.image_shape)
-                # retval_camera.update_after_resize(image_shape_before_resize, self.image_shape)
+                retval_camera.update_after_resize(image_shape_before_resize, self.image_shape)
 
                 sample['image_shapes_before_resize'].append(image_shape_before_resize)
 
@@ -276,6 +304,8 @@ class Multiview_coco(Dataset):
             keypoints = db_rec['joints_2d'].reshape(-1)
             keypoints_undistorted = cv2.undistortPoints(keypoints, self.K[cameraIndex], self.distortions[cameraIndex], None, self.K[cameraIndex])[0]
             keypoints_undistorted1 = keypoints_undistorted * self.image_shape[0] / self.ori_image_shape[0]
+            keypoints_undistorted2 = self.gt_2d[idx1][cameraIndex]
+            assert  np.all(keypoints_undistorted1 == keypoints_undistorted2)
             target_heatmap, target_weights = self._udp_generate_target(keypoints_undistorted1, db_rec['joints_vis'])
             if False:
                 keypoints_undistorted2 = (keypoints_undistorted1 + 0.5).astype(np.int32).reshape(-1)
@@ -302,11 +332,15 @@ class Multiview_coco(Dataset):
         for index, item in enumerate(items):
             db_rec = copy.deepcopy(self.db[item])
             points.append(db_rec['joints_2d'])
-        # time0 = time.time()
+        assert len(points) == len(self.serials)
         keypoint_3d_in_base_camera, inlier_list = triangulate_ransac(self.proj_matricies, points)
         # print("ransac triangulation time:", time.time() - time0)
+        keypoint_3d_in_base_camera1 = self.gt_3d[idx1]
+        if not np.allclose(keypoint_3d_in_base_camera , keypoint_3d_in_base_camera1, atol= 1):
+            print("notclose:", keypoint_3d_in_base_camera , keypoint_3d_in_base_camera1)
+
         sample['keypoints_3d'] =  np.pad(
-            keypoint_3d_in_base_camera,
+            keypoint_3d_in_base_camera1,
             ((0,1)), 'constant', constant_values=1.0).reshape(self.num_keypoints, -1)
         sample['indexes'] = idx
 
@@ -321,38 +355,25 @@ class Multiview_coco(Dataset):
     def __len__(self):
         return self.group_size * self.times 
 
-    def evaluate(self, pred, *args, **kwargs):
-        pred = pred.copy()
-
-        headsize = self.image_size[0] / 10.0
+    def evaluate(self, keypoints_3d_predicted, pred_2d):
+        pred = pred_2d.copy().squeeze()
+        keypoints_3d_predicted = keypoints_3d_predicted.squeeze()
+        headsize = self.image_shape[0] / 10.0
         threshold = 0.5
 
-        u2a = self.u2a_mapping
-        a2u = {v: k for k, v in u2a.items() if v != '*'}
-        a = list(a2u.keys())
-        u = list(a2u.values())
-        indexes = list(range(len(a)))
-        indexes.sort(key=a.__getitem__)
-        sa = list(map(a.__getitem__, indexes))
-        su = np.array(list(map(u.__getitem__, indexes)))
-
-        gt = []
-        for items in self.grouping:
-            for item in items:
-                gt.append(self.db[item]['joints_2d'][su, :2])
-        gt = np.array(gt)
-        pred = pred[:, su, :2]
-
-        distance = np.sqrt(np.sum((gt - pred)**2, axis=2))
+        distance = np.sqrt(np.sum((self.gt_2d - pred)**2, axis=2))
+        mean2d_distance1 = np.mean(distance) 
+        mean2d_distance = mean2d_distance1 /( self.image_shape[0] / self.ori_image_shape[0])
         detected = (distance <= headsize * threshold)
 
-        joint_detection_rate = np.sum(detected, axis=0) / np.float(gt.shape[0])
+        joint_detection_rate = np.sum(detected, axis=0) / np.float(self.gt_2d.shape[0])
 
-        name_values = collections.OrderedDict()
-        joint_names = self.actual_joints
-        for i in range(len(a2u)):
-            name_values[joint_names[sa[i]]] = joint_detection_rate[i]
-        return name_values, np.mean(joint_detection_rate)
+        distance3d = np.sqrt(np.sum((self.gt_3d - keypoints_3d_predicted)**2, axis=1))
+        diff3d = self.gt_3d - keypoints_3d_predicted
+        distance3d1 = np.linalg.norm(diff3d, axis = 1)
+        mean3d_distance = np.mean(distance3d1)       
+
+        return mean2d_distance, mean3d_distance
 
     def _udp_generate_target(self, joints_3d, joints_3d_visible
                              ):
