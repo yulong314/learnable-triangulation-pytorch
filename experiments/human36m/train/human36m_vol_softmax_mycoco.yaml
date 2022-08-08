@@ -1,9 +1,9 @@
 title: "human36m_vol_softmax"
 kind: "human36m"
 vis_freq: 1000
-vis_n_elements: 10
+vis_n_elements: 20
 
-image_shape: [384, 384]
+image_shape: [224, 384]
 
 opt:
   criterion: "MAE"
@@ -33,9 +33,9 @@ model:
 
   use_gt_pelvis: false
 
-  cuboid_side: 2500.0
+  cuboid_side: 2000.0
 
-  volume_size: 64
+  volume_size: 32
   volume_multiplier: 1.0
   volume_softmax: true
 
@@ -43,14 +43,14 @@ model:
   heatmap_multiplier: 100.0
 
   backbone:
-    name: "resnet152"
+    name: "resnet50"
     style: "simple"
 
     init_weights: true
     checkpoint: "./models/pose_resnet_4.5_pixels_human36m.pth"
 
-    num_joints: 17
-    num_layers: 152
+    num_joints: 1
+    num_layers: 50
 
 dataset:
   kind: "human36m"

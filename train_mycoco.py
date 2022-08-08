@@ -60,7 +60,7 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
     paraReader.readPara()    
     train_dataloader, val_dataloader, train_sampler = None, None, None
     if is_train:
-        annfile = "/2t/data/recordedSamples/pose2/20220708/train.json"
+        annfile = "/2t/data/recordedSamples/pose2/20220708_undeleted/train.json"
         img_prefix = os.path.dirname(annfile)
         # train
         is_train = True 
@@ -90,7 +90,7 @@ def setup_human36m_dataloaders(config, is_train, distributed_train):
 
     # val
     is_train = False 
-    annfile = "/2t/data/recordedSamples/pose2/20220708/val.json"
+    annfile = "/2t/data/recordedSamples/pose2/20220708_undeleted/val.json"
     img_prefix = os.path.dirname(annfile)
     val_dataset = multiviewcoco.Multiview_coco(is_train, annfile, img_prefix, serials, trainserials, paraReader.intrinsics, paraReader.distortions, paraReader.extrinsics, 
             image_shape=config.image_shape if hasattr(config, "image_shape") else (256, 256),
